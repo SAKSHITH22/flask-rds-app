@@ -1,26 +1,28 @@
-# 🐍 Use official lightweight Python base image
+# Dockerfile
 FROM python:3.12-slim
 
-# Prevent Python from writing .pyc files & enable unbuffered logging
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Set the working directory
+# Create app directory
 WORKDIR /app
 
-# 🧰 Install required system dependencies + MariaDB client for RDS testing
-RUN apt-get update && apt-get install -y \
-    default-libmysqlclient-dev gcc mariadb-client \
+# Install system deps required by mysql-connector or bcrypt
+RUN apt-get update && apt-get install -y build-essential default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 📦 Copy project files into the container
+# Copy requirements first to leverage Docker cache
+COPY requirement.txt /app/requirement.txt
+RUN python -m pip install --upgrade pip
+RUN pip install --no-cache-dir -r /app/requirement.txt
+
+# Copy app code
 COPY . /app
 
-# 🐍 Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 🌐 Expose Flask default port
+# Expose port
 EXPOSE 5000
 
-# 🏃 Command to start the Flask app
+# Use non-root user (optional but recommended)
+# RUN useradd --create-home appuser
+# USER appuser
+
+ENV FLASK_ENV=production
+
 CMD ["python", "app.py"]
