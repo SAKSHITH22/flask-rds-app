@@ -31,15 +31,15 @@ pipeline {
             }
         }
 
-        // ⬆️ Push image to DockerHub
+        // ✅ FIXED: Push image to DockerHub using username+password credentials
         stage('Push to DockerHub') {
             steps {
                 echo "⬆️ Pushing image to DockerHub..."
-                withCredentials([string(credentialsId: 'dockerhub-token', variable: 'DOCKERHUB_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "🔐 Logging in to DockerHub..."
-                        echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin
-                        docker push $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker push $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
                         docker logout
                     '''
                 }
