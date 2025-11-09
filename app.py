@@ -2,25 +2,40 @@ from flask import Flask, render_template_string, request, redirect, session, url
 import mysql.connector
 import bcrypt
 import os
+import time
+import logging
 
+# ----------------- Flask Configuration -----------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey123")
 
-# ----------------- Database Connection -----------------
-def get_db_connection():
-    try:
-        conn = mysql.connector.connect(
-            host=os.environ.get("DB_HOST", "sakshith-mysql.cu9gmuueigg2.us-east-1.rds.amazonaws.com"),
-            user=os.environ.get("DB_USER", "sakshith"),
-            password=os.environ.get("DB_PASS", "StrongPass123!"),
-            database=os.environ.get("DB_NAME", "userdb"),
-            connect_timeout=10
-        )
-        print("✅ Database connected successfully")
-        return conn
-    except mysql.connector.Error as err:
-        print(f"❌ Database connection error: {err}")
-        return None
+# ----------------- Logging Setup -----------------
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
+
+# ----------------- Database Connection Helper -----------------
+def get_db_connection(retries=5, delay=3):
+    """Attempt to connect to the MySQL database with retries."""
+    host = os.environ.get("DB_HOST", "sakshith-mysql.cu9gmuueigg2.us-east-1.rds.amazonaws.com")
+    user = os.environ.get("DB_USER", "sakshith")
+    password = os.environ.get("DB_PASS", "StrongPass123!")
+    database = os.environ.get("DB_NAME", "userdb")
+
+    for attempt in range(retries):
+        try:
+            conn = mysql.connector.connect(
+                host=host,
+                user=user,
+                password=password,
+                database=database,
+                connect_timeout=10
+            )
+            logging.info("✅ Database connected successfully")
+            return conn
+        except mysql.connector.Error as err:
+            logging.error(f"❌ Database connection failed (Attempt {attempt+1}/{retries}): {err}")
+            time.sleep(delay)
+    logging.critical("🚨 All attempts to connect to database failed. Check RDS or credentials.")
+    return None
 
 # ----------------- HTML Templates -----------------
 login_html = """
@@ -80,12 +95,11 @@ def login():
 
         conn = get_db_connection()
         if not conn:
-            return "<h3>Database connection failed. Check server logs for details.</h3>"
+            return "<h3>❌ Database connection failed. Check server logs or RDS configuration.</h3>"
 
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM users WHERE username=%s", (username,))
         user = cursor.fetchone()
-
         cursor.close()
         conn.close()
 
@@ -107,15 +121,16 @@ def register():
 
         conn = get_db_connection()
         if not conn:
-            return "<h3>Database connection failed. Check server logs for details.</h3>"
+            return "<h3>❌ Database connection failed. Check server logs or RDS configuration.</h3>"
 
         cursor = conn.cursor()
         try:
             cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed_pw))
             conn.commit()
+            logging.info(f"👤 New user registered: {username}")
             return redirect('/')
         except mysql.connector.IntegrityError:
-            return "<h3>Username already exists.</h3><a href='/register'>Try Again</a>"
+            return "<h3>⚠️ Username already exists.</h3><a href='/register'>Try Again</a>"
         finally:
             cursor.close()
             conn.close()
@@ -137,15 +152,22 @@ def logout():
     return redirect('/')
 
 
-# 🧩 Test Route for Database Connection
+# 🧩 Health and Debug Routes
 @app.route('/testdb')
 def testdb():
     conn = get_db_connection()
     if conn:
+        conn.close()
         return "<h2>✅ Successfully connected to RDS MySQL!</h2>"
     else:
-        return "<h2>❌ Failed to connect to database. Check EC2 logs for the error message.</h2>"
+        return "<h2>❌ Failed to connect to database. Check pod logs.</h2>"
+
+@app.route('/healthz')
+def health():
+    """Basic health endpoint for Kubernetes probes."""
+    return {"status": "ok"}, 200
 
 
+# ----------------- Run App -----------------
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
