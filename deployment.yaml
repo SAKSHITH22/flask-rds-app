@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: flask-app
-          image: sakshith123/flask-rds-app:REPLACE_TAG
+          image: sakshith123/flask-rds-app:v1   # Jenkins updates automatically
           ports:
             - containerPort: 5000
           env:
@@ -40,23 +40,18 @@ spec:
                 secretKeyRef:
                   name: flask-db-secret
                   key: DB_NAME
-            - name: SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: flask-db-secret
-                  key: SECRET_KEY
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 5000
-            initialDelaySeconds: 30
-            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /healthz
               port: 5000
             initialDelaySeconds: 10
             periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 10
           resources:
             requests:
               memory: "256Mi"
