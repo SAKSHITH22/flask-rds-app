@@ -16,35 +16,47 @@ spec:
     spec:
       containers:
         - name: flask-app
-          image: sakshith123/flask-rds-app:v5   # update to latest tag (v6) after next Jenkins run
+          image: sakshith123/flask-rds-app:REPLACE_TAG
           ports:
             - containerPort: 5000
           env:
-            - name: DB_HOST
-              value: "sakshith-mysql.cu9gmuueigg2.us-east-1.rds.amazonaws.com"
             - name: DB_USER
-              value: "sakshith"
+              valueFrom:
+                secretKeyRef:
+                  name: flask-db-secret
+                  key: DB_USER
             - name: DB_PASS
-              value: "StrongPass123!"
+              valueFrom:
+                secretKeyRef:
+                  name: flask-db-secret
+                  key: DB_PASS
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: flask-db-secret
+                  key: DB_HOST
             - name: DB_NAME
-              value: "userdb"
-
-          # ✅ Add health checks so AWS LB sees the pod as healthy
-          readinessProbe:
-            httpGet:
-              path: /
-              port: 5000
-            initialDelaySeconds: 10
-            periodSeconds: 5
-
+              valueFrom:
+                secretKeyRef:
+                  name: flask-db-secret
+                  key: DB_NAME
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flask-db-secret
+                  key: SECRET_KEY
           livenessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: 5000
             initialDelaySeconds: 30
             periodSeconds: 10
-
-          # ✅ Optional: set CPU/memory limits for stability
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 5
           resources:
             requests:
               memory: "256Mi"
