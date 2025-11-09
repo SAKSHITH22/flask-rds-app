@@ -2,6 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: flask-app-deployment
+  labels:
+    app: flask-app
 spec:
   replicas: 2
   selector:
@@ -14,7 +16,7 @@ spec:
     spec:
       containers:
         - name: flask-app
-          image: sakshith123/flask-rds-app:v5
+          image: sakshith123/flask-rds-app:v5   # update to latest tag (v6) after next Jenkins run
           ports:
             - containerPort: 5000
           env:
@@ -26,3 +28,27 @@ spec:
               value: "StrongPass123!"
             - name: DB_NAME
               value: "userdb"
+
+          # ✅ Add health checks so AWS LB sees the pod as healthy
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+          # ✅ Optional: set CPU/memory limits for stability
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
