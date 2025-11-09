@@ -43,7 +43,6 @@ pipeline {
             }
         }
 
-        // ☸️ Configure and Deploy to EKS (Combined fix)
         stage('Configure and Deploy to EKS') {
             steps {
                 echo "☸️ Configuring kubectl and deploying app..."
@@ -70,8 +69,16 @@ pipeline {
         success {
             echo "✅ Pipeline completed successfully!"
             echo "🌐 Your app is live on AWS EKS LoadBalancer!"
-            sh 'kubectl get svc flask-app-service'
+
+            // ✅ FIX: Wrap in AWS credentials again so kubectl works here
+            withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                sh '''
+                    aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
+                    kubectl get svc flask-app-service
+                '''
+            }
         }
+
         failure {
             echo "❌ Pipeline failed. Check console output for error details."
         }
