@@ -8,6 +8,7 @@ pipeline {
         IMAGE_NAME = "flask-rds-app"
         IMAGE_TAG = "v${BUILD_NUMBER}"
         DEPLOYMENT_FILE = "deployment.yaml"
+        SERVICE_FILE = "service.yaml"
     }
 
     stages {
@@ -33,7 +34,6 @@ pipeline {
         stage('Push to DockerHub') {
             steps {
                 echo "⬆️ Pushing image to DockerHub..."
-                // Uses username+password credential type already configured in Jenkins
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     retry(3) {
                         sh '''
@@ -49,14 +49,12 @@ pipeline {
 
         stage('Update Kubernetes YAML') {
             steps {
-                echo "🔧 Updating $DEPLOYMENT_FILE with image: $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG"
-                // Replace the image line in deployment.yaml (works if image appears as "<user>/<name>:<tag>" or similar)
+                echo "🔧 Updating deployment.yaml with image: $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG"
                 sh '''
                     if grep -q "image:" $DEPLOYMENT_FILE; then
-                      # Replace any existing image line for this image name
-                      sed -i "s|image: .*${IMAGE_NAME}:.*|image: ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}|g" $DEPLOYMENT_FILE || true
+                      sed -i "s|image: .*flask-rds-app:.*|image: ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}|g" $DEPLOYMENT_FILE || true
                     else
-                      echo "Warning: no image line found in $DEPLOYMENT_FILE"
+                      echo "⚠️ No image line found in $DEPLOYMENT_FILE"
                     fi
                     echo "---- deployment.yaml (excerpt) ----"
                     grep -E "image:|name:|containerPort" -n $DEPLOYMENT_FILE || true
@@ -68,14 +66,14 @@ pipeline {
             steps {
                 echo "☸️ Configuring kubectl and deploying app..."
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
-                    // Wrap the whole deploy into a retry to handle transient API errors
                     retry(3) {
                         sh '''
                             echo "🔑 Setting up kubeconfig for EKS..."
                             aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
 
-                            echo "🚀 Applying Kubernetes manifest..."
+                            echo "🚀 Applying Kubernetes manifests..."
                             kubectl apply -f $DEPLOYMENT_FILE
+                            kubectl apply -f $SERVICE_FILE || true
 
                             echo "⏳ Waiting for rollout to finish..."
                             kubectl rollout status deployment/flask-app-deployment --timeout=3m
@@ -92,20 +90,23 @@ pipeline {
 
     post {
         always {
-            echo "🧹 Cleaning up local docker system to free space..."
-            // best-effort cleanup; avoid failing pipeline on prune errors
+            echo "🧹 Cleaning up local Docker system..."
             sh 'docker system prune -af || true'
         }
 
         success {
             echo "✅ Pipeline completed successfully!"
-            echo "🌐 Your app should be available via the LoadBalancer."
+            echo "🌐 Checking if LoadBalancer is active..."
 
-            // Re-authenticate for this post step so kubectl works here too
             withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                 sh '''
                     aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
+                    echo "➡️ Current services:"
                     kubectl get svc flask-app-service
+
+                    echo "🌍 LoadBalancer URL (if provisioned):"
+                    kubectl get svc flask-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
+                    echo ""
                 '''
             }
         }
