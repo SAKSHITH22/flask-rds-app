@@ -11,7 +11,6 @@ pipeline {
 
     stages {
 
-        // ✅ Fixed: Git checkout (explicit branch = main)
         stage('Checkout Code') {
             steps {
                 echo "📦 Cloning Flask app repo from GitHub..."
@@ -19,7 +18,6 @@ pipeline {
             }
         }
 
-        // 🐳 Build the Docker image
         stage('Build Docker Image') {
             steps {
                 echo "🐳 Building Docker image..."
@@ -31,7 +29,6 @@ pipeline {
             }
         }
 
-        // ✅ FIXED: Push image to DockerHub using username+password credentials
         stage('Push to DockerHub') {
             steps {
                 echo "⬆️ Pushing image to DockerHub..."
@@ -46,47 +43,29 @@ pipeline {
             }
         }
 
-        // ☸️ Configure kubectl for AWS EKS
-        stage('Configure Kubectl') {
+        // ☸️ Configure and Deploy to EKS (Combined fix)
+        stage('Configure and Deploy to EKS') {
             steps {
-                echo "🔑 Configuring kubectl with EKS credentials..."
+                echo "☸️ Configuring kubectl and deploying app..."
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                     sh '''
+                        echo "🔑 Setting up kubeconfig for EKS..."
                         aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
-                        kubectl get nodes
+
+                        echo "🚀 Deploying new Docker image..."
+                        kubectl set image deployment/flask-app-deployment flask-app=$DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG
+                        echo "⏳ Waiting for rollout..."
+                        kubectl rollout status deployment/flask-app-deployment
+
+                        echo "✅ Deployment complete! Checking status..."
+                        kubectl get pods -o wide
+                        kubectl get svc flask-app-service
                     '''
                 }
             }
         }
-
-        // 🚀 Deploy the app to EKS
-        stage('Deploy to EKS') {
-            steps {
-                echo "🚀 Deploying latest image to EKS..."
-                sh '''
-                    set -e
-                    kubectl set image deployment/flask-app-deployment flask-app=$DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG --record
-                    echo "⏳ Waiting for rollout to finish..."
-                    kubectl rollout status deployment/flask-app-deployment
-                '''
-            }
-        }
-
-        // 🔍 Verify deployment
-        stage('Verify Deployment') {
-            steps {
-                echo "🔍 Checking EKS status..."
-                sh '''
-                    echo "➡️ Service status:"
-                    kubectl get svc flask-app-service
-                    echo "➡️ Pod status:"
-                    kubectl get pods -o wide
-                '''
-            }
-        }
     }
 
-    // ✅ Post-build actions
     post {
         success {
             echo "✅ Pipeline completed successfully!"
