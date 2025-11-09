@@ -15,7 +15,10 @@ app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey123")
 # ----------------------------------------------------
 # 🧾 Logging Setup
 # ----------------------------------------------------
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s'
+)
 
 # ----------------------------------------------------
 # 🗄️ Database Connection Helper
@@ -27,11 +30,11 @@ def get_db_connection(retries=5, delay=3):
     password = os.environ.get("DB_PASS")
     database = os.environ.get("DB_NAME", "userdb")
 
-    if not all([host, user, password]):
-        logging.critical("❌ Missing required DB environment variables (DB_HOST, DB_USER, DB_PASS)")
+    if not all([host, user, password, database]):
+        logging.critical("❌ Missing required DB environment variables.")
         return None
 
-    for attempt in range(retries):
+    for attempt in range(1, retries + 1):
         try:
             conn = mysql.connector.connect(
                 host=host,
@@ -40,17 +43,17 @@ def get_db_connection(retries=5, delay=3):
                 database=database,
                 connect_timeout=10
             )
-            logging.info("✅ Database connected successfully")
+            logging.info(f"✅ Database connected successfully on attempt {attempt}")
             return conn
         except mysql.connector.Error as err:
-            logging.error(f"❌ Database connection failed (Attempt {attempt+1}/{retries}): {err}")
+            logging.error(f"❌ Database connection failed (Attempt {attempt}/{retries}): {err}")
             time.sleep(delay)
-    logging.critical("🚨 All attempts to connect to database failed.")
+
+    logging.critical("🚨 All attempts to connect to database failed. Please check RDS settings.")
     return None
 
-
 # ----------------------------------------------------
-# 🧱 Optional: Ensure table exists
+# 🧱 Ensure 'users' Table Exists
 # ----------------------------------------------------
 def init_db():
     """Create 'users' table if it doesn't exist."""
@@ -60,19 +63,23 @@ def init_db():
         return False
 
     cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(255) UNIQUE NOT NULL,
-            password VARCHAR(255) NOT NULL
-        )
-    """)
-    conn.commit()
-    cursor.close()
-    conn.close()
-    logging.info("✅ Verified users table exists.")
-    return True
-
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL
+            )
+        """)
+        conn.commit()
+        logging.info("✅ Verified or created 'users' table in database.")
+        return True
+    except mysql.connector.Error as err:
+        logging.error(f"❌ Error initializing DB: {err}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
 
 # ----------------------------------------------------
 # 🧩 HTML Templates
@@ -142,22 +149,23 @@ a {color:#007BFF; text-decoration:none;}
 </html>
 """
 
-
 # ----------------------------------------------------
 # 🧭 Routes
 # ----------------------------------------------------
+
 @app.route('/', methods=['GET', 'POST'])
 def login():
+    """User login route."""
     if 'username' in session:
         return redirect(url_for('dashboard'))
 
     if request.method == 'POST':
-        username = request.form['username']
+        username = request.form['username'].strip()
         password = request.form['password']
 
         conn = get_db_connection()
         if not conn:
-            return "<h3>❌ Database connection failed. Check server logs or RDS configuration.</h3>"
+            return "<h3>❌ Database connection failed. Check RDS or environment configuration.</h3>"
 
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM users WHERE username=%s", (username,))
@@ -173,17 +181,21 @@ def login():
 
     return render_template_string(login_html)
 
-
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    """User registration route."""
     if request.method == 'POST':
-        username = request.form['username']
+        username = request.form['username'].strip()
         password = request.form['password']
+
+        if len(username) < 3 or len(password) < 3:
+            return "<h3>⚠️ Username and password must be at least 3 characters long.</h3><a href='/register'>Try again</a>"
+
         hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
         conn = get_db_connection()
         if not conn:
-            return "<h3>❌ Database connection failed. Check server logs or RDS configuration.</h3>"
+            return "<h3>❌ Database connection failed. Check RDS configuration.</h3>"
 
         cursor = conn.cursor()
         try:
@@ -193,56 +205,56 @@ def register():
             return redirect('/')
         except mysql.connector.IntegrityError:
             return "<h3>⚠️ Username already exists.</h3><a href='/register'>Try Again</a>"
+        except mysql.connector.Error as err:
+            logging.error(f"❌ Database error during registration: {err}")
+            return "<h3>❌ Failed to register user. Try again later.</h3>"
         finally:
             cursor.close()
             conn.close()
 
     return render_template_string(register_html)
 
-
 @app.route('/dashboard')
 def dashboard():
+    """Protected user dashboard."""
     if 'username' in session:
         return render_template_string(dashboard_html, username=session['username'])
-    else:
-        return redirect('/')
-
+    return redirect('/')
 
 @app.route('/logout')
 def logout():
+    """Logout route."""
     session.pop('username', None)
     return redirect('/')
-
 
 # ----------------------------------------------------
 # 🔍 Health & Debug Routes
 # ----------------------------------------------------
 @app.route('/testdb')
 def testdb():
+    """Quick test for DB connectivity."""
     conn = get_db_connection()
     if conn:
         conn.close()
         return "<h2>✅ Successfully connected to RDS MySQL!</h2>"
-    else:
-        return "<h2>❌ Failed to connect to database. Check pod logs.</h2>"
+    return "<h2>❌ Failed to connect to database. Check pod logs or env vars.</h2>"
 
 @app.route('/initdb')
 def setup_database():
-    """One-time setup route to create 'users' table if missing."""
+    """One-time setup route to create the 'users' table if missing."""
     if init_db():
         return "<h3>✅ Database initialized successfully.</h3>"
-    else:
-        return "<h3>❌ Database initialization failed.</h3>"
+    return "<h3>❌ Database initialization failed.</h3>"
 
 @app.route('/healthz')
 def health():
+    """Kubernetes health check endpoint."""
     return jsonify({"status": "ok"}), 200
-
 
 # ----------------------------------------------------
 # 🚀 Run the App
 # ----------------------------------------------------
 if __name__ == '__main__':
-    # Automatically ensure table exists on startup
+    logging.info("🚀 Starting Flask application...")
     init_db()
     app.run(host='0.0.0.0', port=5000)
