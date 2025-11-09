@@ -7,6 +7,7 @@ pipeline {
         DOCKERHUB_USER = "sakshith123"
         IMAGE_NAME = "flask-rds-app"
         IMAGE_TAG = "v${BUILD_NUMBER}"
+        DEPLOYMENT_FILE = "deployment.yaml"
     }
 
     stages {
@@ -32,14 +33,34 @@ pipeline {
         stage('Push to DockerHub') {
             steps {
                 echo "⬆️ Pushing image to DockerHub..."
+                // Uses username+password credential type already configured in Jenkins
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
-                        echo "🔐 Logging in to DockerHub..."
-                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker push $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
-                        docker logout
-                    '''
+                    retry(3) {
+                        sh '''
+                            echo "🔐 Logging in to DockerHub..."
+                            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                            docker push $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
+                            docker logout
+                        '''
+                    }
                 }
+            }
+        }
+
+        stage('Update Kubernetes YAML') {
+            steps {
+                echo "🔧 Updating $DEPLOYMENT_FILE with image: $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG"
+                // Replace the image line in deployment.yaml (works if image appears as "<user>/<name>:<tag>" or similar)
+                sh '''
+                    if grep -q "image:" $DEPLOYMENT_FILE; then
+                      # Replace any existing image line for this image name
+                      sed -i "s|image: .*${IMAGE_NAME}:.*|image: ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}|g" $DEPLOYMENT_FILE || true
+                    else
+                      echo "Warning: no image line found in $DEPLOYMENT_FILE"
+                    fi
+                    echo "---- deployment.yaml (excerpt) ----"
+                    grep -E "image:|name:|containerPort" -n $DEPLOYMENT_FILE || true
+                '''
             }
         }
 
@@ -47,30 +68,40 @@ pipeline {
             steps {
                 echo "☸️ Configuring kubectl and deploying app..."
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
-                    sh '''
-                        echo "🔑 Setting up kubeconfig for EKS..."
-                        aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
+                    // Wrap the whole deploy into a retry to handle transient API errors
+                    retry(3) {
+                        sh '''
+                            echo "🔑 Setting up kubeconfig for EKS..."
+                            aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
 
-                        echo "🚀 Deploying new Docker image..."
-                        kubectl set image deployment/flask-app-deployment flask-app=$DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG
-                        echo "⏳ Waiting for rollout..."
-                        kubectl rollout status deployment/flask-app-deployment
+                            echo "🚀 Applying Kubernetes manifest..."
+                            kubectl apply -f $DEPLOYMENT_FILE
 
-                        echo "✅ Deployment complete! Checking status..."
-                        kubectl get pods -o wide
-                        kubectl get svc flask-app-service
-                    '''
+                            echo "⏳ Waiting for rollout to finish..."
+                            kubectl rollout status deployment/flask-app-deployment --timeout=3m
+
+                            echo "✅ Deployment complete! Checking status..."
+                            kubectl get pods -o wide
+                            kubectl get svc flask-app-service || true
+                        '''
+                    }
                 }
             }
         }
     }
 
     post {
+        always {
+            echo "🧹 Cleaning up local docker system to free space..."
+            // best-effort cleanup; avoid failing pipeline on prune errors
+            sh 'docker system prune -af || true'
+        }
+
         success {
             echo "✅ Pipeline completed successfully!"
-            echo "🌐 Your app is live on AWS EKS LoadBalancer!"
+            echo "🌐 Your app should be available via the LoadBalancer."
 
-            // ✅ FIX: Wrap in AWS credentials again so kubectl works here
+            // Re-authenticate for this post step so kubectl works here too
             withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                 sh '''
                     aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
@@ -80,7 +111,7 @@ pipeline {
         }
 
         failure {
-            echo "❌ Pipeline failed. Check console output for error details."
+            echo "❌ Pipeline failed. Check console output for details."
         }
     }
 }
