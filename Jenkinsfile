@@ -13,7 +13,7 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 echo "📦 Cloning Flask app repo from GitHub..."
-                git 'https://github.com/sakshith123/flask-rds-app.git'
+                git 'https://github.com/SAKSHITH22/flask-rds-app.git'
             }
         }
 
