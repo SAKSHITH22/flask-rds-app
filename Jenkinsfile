@@ -45,7 +45,6 @@ pipeline {
         stage('Configure Kubeconfig') {
             steps {
                 echo "⚙️ Configuring kubeconfig for EKS..."
-                // ✅ Use AWS credentials stored in Jenkins
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-credentials'
@@ -58,38 +57,39 @@ pipeline {
         }
 
         stage('Apply Secrets & Deploy') {
-    steps {
-        echo "🚀 Deploying to EKS..."
-        withCredentials([[
-            $class: 'AmazonWebServicesCredentialsBinding',
-            credentialsId: 'aws-credentials'
-        ]]) {
-            sh '''
-                aws sts get-caller-identity
-                kubectl apply -f $SECRET_FILE || true
-                kubectl apply -f $DEPLOYMENT_FILE
-                kubectl apply -f $SERVICE_FILE
-                kubectl rollout status deployment/flask-app-deployment --timeout=3m || true
-            '''
+            steps {
+                echo "🚀 Deploying to EKS..."
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    sh '''
+                        aws sts get-caller-identity
+                        kubectl apply -f $SECRET_FILE || true
+                        kubectl apply -f $DEPLOYMENT_FILE
+                        kubectl apply -f $SERVICE_FILE
+                        kubectl rollout status deployment/flask-app-deployment --timeout=3m || true
+                    '''
+                }
+            }
         }
-    }
-}
 
-stage('Diagnostics') {
-    steps {
-        echo "🩺 Running diagnostics..."
-        withCredentials([[
-            $class: 'AmazonWebServicesCredentialsBinding',
-            credentialsId: 'aws-credentials'
-        ]]) {
-            sh '''
-                kubectl get pods -o wide
-                kubectl get svc flask-app-service
-                kubectl get events --sort-by=.metadata.creationTimestamp | tail -n 40
-            '''
+        stage('Diagnostics') {
+            steps {
+                echo "🩺 Running diagnostics..."
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    sh '''
+                        kubectl get pods -o wide
+                        kubectl get svc flask-app-service
+                        kubectl get events --sort-by=.metadata.creationTimestamp | tail -n 40
+                    '''
+                }
+            }
         }
     }
-}
 
     post {
         always {
@@ -97,9 +97,14 @@ stage('Diagnostics') {
         }
         success {
             echo "✅ Deployment completed successfully!"
-            sh '''
-                kubectl get svc flask-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
-            '''
+            withCredentials([[
+                $class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-credentials'
+            ]]) {
+                sh '''
+                    kubectl get svc flask-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
+                '''
+            }
         }
         failure {
             echo "❌ Pipeline failed. Check logs above."
