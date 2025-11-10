@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: flask-app
-          image: sakshith123/flask-rds-app:v1   # Jenkins updates automatically
+          image: sakshith123/flask-rds-app:v1  # Jenkins updates this tag
           ports:
             - containerPort: 5000
           env:
