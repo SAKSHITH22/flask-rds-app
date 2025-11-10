@@ -13,25 +13,26 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/SAKSHITH22/flask-rds-app.git'
             }
         }
 
-       stage('Build & Push Docker Image') {
-    steps {
-        echo "🐳 Building Docker image..."
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-            sh '''
-                docker build -t $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG .
-                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                docker push $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG
-                docker logout
-            '''
+        stage('Build & Push Docker Image') {
+            steps {
+                echo "🐳 Building Docker image..."
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''
+                        docker build -t $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG .
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker push $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG
+                        docker logout
+                    '''
+                }
+            }
         }
-    }
-}
 
         stage('Update Deployment Image') {
             steps {
@@ -43,14 +44,22 @@ pipeline {
 
         stage('Configure Kubeconfig') {
             steps {
-                sh '''
-                    aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
-                '''
+                echo "⚙️ Configuring kubeconfig for EKS..."
+                // ✅ Use AWS credentials stored in Jenkins
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    sh '''
+                        aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
+                    '''
+                }
             }
         }
 
         stage('Apply Secrets & Deploy') {
             steps {
+                echo "🚀 Deploying to EKS..."
                 sh '''
                     kubectl apply -f $SECRET_FILE || true
                     kubectl apply -f $DEPLOYMENT_FILE
@@ -62,6 +71,7 @@ pipeline {
 
         stage('Diagnostics') {
             steps {
+                echo "🩺 Running diagnostics..."
                 sh '''
                     kubectl get pods -o wide
                     kubectl get svc flask-app-service
@@ -76,6 +86,7 @@ pipeline {
             sh 'docker system prune -af || true'
         }
         success {
+            echo "✅ Deployment completed successfully!"
             sh '''
                 kubectl get svc flask-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
             '''
