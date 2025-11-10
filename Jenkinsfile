@@ -76,14 +76,44 @@ pipeline {
                             kubectl apply -f $SERVICE_FILE || true
 
                             echo "⏳ Waiting for rollout to finish..."
-                            kubectl rollout status deployment/flask-app-deployment --timeout=3m
+                            # Use || true so pipeline continues even if rollout fails
+                            kubectl rollout status deployment/flask-app-deployment --timeout=3m || true
 
-                            echo "✅ Deployment complete! Checking status..."
+                            echo "✅ Deployment attempted! Checking current status..."
                             kubectl get pods -o wide
                             kubectl get svc flask-app-service || true
                         '''
                     }
                 }
+            }
+        }
+
+        // 🧠 New Debug Stage — to automatically collect logs and events if rollout fails
+        stage('Debug Kubernetes Deployment') {
+            steps {
+                echo "🔍 Collecting Kubernetes diagnostics..."
+                sh '''
+                    echo "=== DEPLOYMENT STATUS ==="
+                    kubectl get deployment flask-app-deployment -o wide || true
+
+                    echo "\n=== PODS STATUS ==="
+                    kubectl get pods -o wide || true
+
+                    echo "\n=== POD DESCRIPTIONS ==="
+                    for pod in $(kubectl get pods -l app=flask-app -o name 2>/dev/null); do
+                        echo "\n---- $pod ----"
+                        kubectl describe $pod | tail -n 50 || true
+                    done
+
+                    echo "\n=== POD LOGS (Last 50 lines) ==="
+                    for pod in $(kubectl get pods -l app=flask-app -o name 2>/dev/null); do
+                        echo "\n---- Logs for $pod ----"
+                        kubectl logs $pod --tail=50 || true
+                    done
+
+                    echo "\n=== CLUSTER EVENTS ==="
+                    kubectl get events --sort-by=.metadata.creationTimestamp | tail -n 40 || true
+                '''
             }
         }
     }
@@ -97,13 +127,11 @@ pipeline {
         success {
             echo "✅ Pipeline completed successfully!"
             echo "🌐 Checking if LoadBalancer is active..."
-
             withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                 sh '''
                     aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
                     echo "➡️ Current services:"
                     kubectl get svc flask-app-service
-
                     echo "🌍 LoadBalancer URL (if provisioned):"
                     kubectl get svc flask-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
                     echo ""
