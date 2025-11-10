@@ -58,28 +58,38 @@ pipeline {
         }
 
         stage('Apply Secrets & Deploy') {
-            steps {
-                echo "🚀 Deploying to EKS..."
-                sh '''
-                    kubectl apply -f $SECRET_FILE || true
-                    kubectl apply -f $DEPLOYMENT_FILE
-                    kubectl apply -f $SERVICE_FILE
-                    kubectl rollout status deployment/flask-app-deployment --timeout=3m || true
-                '''
-            }
-        }
-
-        stage('Diagnostics') {
-            steps {
-                echo "🩺 Running diagnostics..."
-                sh '''
-                    kubectl get pods -o wide
-                    kubectl get svc flask-app-service
-                    kubectl get events --sort-by=.metadata.creationTimestamp | tail -n 40
-                '''
-            }
+    steps {
+        echo "🚀 Deploying to EKS..."
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-credentials'
+        ]]) {
+            sh '''
+                aws sts get-caller-identity
+                kubectl apply -f $SECRET_FILE || true
+                kubectl apply -f $DEPLOYMENT_FILE
+                kubectl apply -f $SERVICE_FILE
+                kubectl rollout status deployment/flask-app-deployment --timeout=3m || true
+            '''
         }
     }
+}
+
+stage('Diagnostics') {
+    steps {
+        echo "🩺 Running diagnostics..."
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-credentials'
+        ]]) {
+            sh '''
+                kubectl get pods -o wide
+                kubectl get svc flask-app-service
+                kubectl get events --sort-by=.metadata.creationTimestamp | tail -n 40
+            '''
+        }
+    }
+}
 
     post {
         always {
