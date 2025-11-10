@@ -19,16 +19,19 @@ pipeline {
             }
         }
 
-        stage('Build & Push Docker Image') {
-            steps {
-                sh '''
-                    docker build -t $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG .
-                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                    docker push $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG
-                    docker logout
-                '''
-            }
+       stage('Build & Push Docker Image') {
+    steps {
+        echo "🐳 Building Docker image..."
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+            sh '''
+                docker build -t $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG .
+                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                docker push $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG
+                docker logout
+            '''
         }
+    }
+}
 
         stage('Update Deployment Image') {
             steps {
