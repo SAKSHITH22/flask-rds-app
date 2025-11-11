@@ -41,8 +41,11 @@ def get_db_connection(retries=5, delay=3):
                 user=user,
                 password=password,
                 database=database,
+                ssl_disabled=True,  # 👈 add this line
                 connect_timeout=5
             )
+
+
             logging.info(f"✅ Database connected successfully on attempt {attempt}")
             return conn
         except mysql.connector.Error as err:
