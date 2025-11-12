@@ -1,4 +1,3 @@
-# app.py
 from flask import Flask, render_template_string, request, redirect, session, url_for, jsonify
 import mysql.connector
 import bcrypt
@@ -31,7 +30,7 @@ def get_db_connection(retries=5, delay=3):
     database = os.environ.get("DB_NAME", "userdb")
 
     if not all([host, user, password, database]):
-        logging.critical("❌ Missing required DB environment variables.")
+        logging.critical(f"❌ Missing DB env vars: DB_HOST={host}, DB_USER={user}, DB_PASS={'SET' if password else 'MISSING'}, DB_NAME={database}")
         return None
 
     for attempt in range(1, retries + 1):
@@ -41,18 +40,16 @@ def get_db_connection(retries=5, delay=3):
                 user=user,
                 password=password,
                 database=database,
-                ssl_disabled=True,  # 👈 add this line
+                ssl_disabled=True,
                 connect_timeout=5
             )
-
-
-            logging.info(f"✅ Database connected successfully on attempt {attempt}")
+            logging.info(f"✅ DB connected on attempt {attempt} (host={host}, user={user})")
             return conn
         except mysql.connector.Error as err:
-            logging.error(f"❌ Database connection failed (Attempt {attempt}/{retries}): {err}")
+            logging.error(f"❌ DB connection failed (Attempt {attempt}/{retries}): {err}")
             time.sleep(delay)
 
-    logging.critical("🚨 All attempts to connect to database failed.")
+    logging.critical("🚨 All attempts to connect to DB failed.")
     return None
 
 # ----------------------------------------------------
@@ -87,77 +84,17 @@ def init_db():
 # ----------------------------------------------------
 # 🧩 HTML Templates
 # ----------------------------------------------------
-login_html = """
-<!DOCTYPE html>
-<html>
-<head>
-<title>Login</title>
-<style>
-body {font-family: Arial; background:#f4f4f9; text-align:center;}
-form {background:white; padding:25px; margin:auto; width:320px; border-radius:10px; box-shadow:0 0 10px gray;}
-input, button {width:90%; margin:10px; padding:10px;}
-a {color:#007BFF; text-decoration:none;}
-</style>
-</head>
-<body>
-<h2>🔐 Login</h2>
-<form method="POST">
-  <input type="text" name="username" placeholder="Username" required><br>
-  <input type="password" name="password" placeholder="Password" required><br>
-  <button type="submit">Login</button>
-  <p>New user? <a href="/register">Register</a></p>
-</form>
-</body>
-</html>
-"""
+login_html = """<html><head><title>Login</title><style>body {font-family: Arial; background:#f4f4f9; text-align:center;} form {background:white; padding:25px; margin:auto; width:320px; border-radius:10px; box-shadow:0 0 10px gray;} input, button {width:90%; margin:10px; padding:10px;} a {color:#007BFF; text-decoration:none;}</style></head><body><h2>🔐 Login</h2><form method="POST"><input type="text" name="username" placeholder="Username" required><br><input type="password" name="password" placeholder="Password" required><br><button type="submit">Login</button><p>New user? <a href="/register">Register</a></p></form></body></html>"""
 
-register_html = """
-<!DOCTYPE html>
-<html>
-<head>
-<title>Register</title>
-<style>
-body {font-family: Arial; background:#f4f4f9; text-align:center;}
-form {background:white; padding:25px; margin:auto; width:320px; border-radius:10px; box-shadow:0 0 10px gray;}
-input, button {width:90%; margin:10px; padding:10px;}
-</style>
-</head>
-<body>
-<h2>📝 Create New Account</h2>
-<form method="POST">
-  <input type="text" name="username" placeholder="Username" required><br>
-  <input type="password" name="password" placeholder="Password" required><br>
-  <button type="submit">Register</button>
-</form>
-<p><a href="/">Back to Login</a></p>
-</body>
-</html>
-"""
+register_html = """<html><head><title>Register</title><style>body {font-family: Arial; background:#f4f4f9; text-align:center;} form {background:white; padding:25px; margin:auto; width:320px; border-radius:10px; box-shadow:0 0 10px gray;} input, button {width:90%; margin:10px; padding:10px;}</style></head><body><h2>📝 Create New Account</h2><form method="POST"><input type="text" name="username" placeholder="Username" required><br><input type="password" name="password" placeholder="Password" required><br><button type="submit">Register</button></form><p><a href="/">Back to Login</a></p></body></html>"""
 
-dashboard_html = """
-<!DOCTYPE html>
-<html>
-<head>
-<title>Dashboard</title>
-<style>
-body {font-family: Arial; background:#f4f4f9; text-align:center;}
-a {color:#007BFF; text-decoration:none;}
-</style>
-</head>
-<body>
-<h1>🎉 Welcome, {{username}}!</h1>
-<p>You have successfully logged in.</p>
-<a href="/logout">Logout</a>
-</body>
-</html>
-"""
+dashboard_html = """<html><head><title>Dashboard</title><style>body {font-family: Arial; background:#f4f4f9; text-align:center;} a {color:#007BFF; text-decoration:none;}</style></head><body><h1>🎉 Welcome, {{username}}!</h1><p>You have successfully logged in.</p><a href="/logout">Logout</a></body></html>"""
 
 # ----------------------------------------------------
 # 🧭 Routes
 # ----------------------------------------------------
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    """User login route."""
     if 'username' in session:
         return redirect(url_for('dashboard'))
 
@@ -185,7 +122,6 @@ def login():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    """User registration route."""
     if request.method == 'POST':
         username = request.form['username'].strip()
         password = request.form['password']
@@ -236,7 +172,7 @@ def testdb():
     if conn:
         conn.close()
         return "<h2>✅ Database connection successful!</h2>"
-    return "<h2>❌ Could not connect to database.</h2>"
+    return "<h2>❌ Could not connect to database. Check logs for details.</h2>"
 
 @app.route('/initdb')
 def setup_database():
@@ -247,6 +183,17 @@ def setup_database():
 @app.route('/healthz')
 def health():
     return jsonify({"status": "ok"}), 200
+
+@app.route('/envdebug')
+def envdebug():
+    env_vars = {
+        "DB_HOST": os.environ.get("DB_HOST"),
+        "DB_USER": os.environ.get("DB_USER"),
+        "DB_PASS": "SET" if os.environ.get("DB_PASS") else "MISSING",
+        "DB_NAME": os.environ.get("DB_NAME"),
+        "SECRET_KEY": "SET" if os.environ.get("SECRET_KEY") else "MISSING"
+    }
+    return jsonify(env_vars)
 
 # ----------------------------------------------------
 # 🚀 Run the App
