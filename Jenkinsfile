@@ -13,7 +13,6 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/SAKSHITH22/flask-rds-app.git'
@@ -36,8 +35,13 @@ pipeline {
 
         stage('Update Deployment Image') {
             steps {
+                echo "🛠️ Updating image reference in deployment.yaml..."
                 sh '''
-                    sed -i "s|image: .*flask-rds-app:.*|image: ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}|g" $DEPLOYMENT_FILE
+                    if command -v yq >/dev/null 2>&1; then
+                        yq e '.spec.template.spec.containers[0].image = "'$DOCKERHUB_USER'/'$IMAGE_NAME':'$IMAGE_TAG'"' -i $DEPLOYMENT_FILE
+                    else
+                        sed -i "s|image: .*flask-rds-app:.*|image: ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}|g" $DEPLOYMENT_FILE
+                    fi
                 '''
             }
         }
@@ -45,10 +49,7 @@ pipeline {
         stage('Configure Kubeconfig') {
             steps {
                 echo "⚙️ Configuring kubeconfig for EKS..."
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials'
-                ]]) {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials' ]]) {
                     sh '''
                         aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
                     '''
@@ -59,15 +60,13 @@ pipeline {
         stage('Apply Secrets & Deploy') {
             steps {
                 echo "🚀 Deploying to EKS..."
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials'
-                ]]) {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials' ]]) {
                     sh '''
                         aws sts get-caller-identity
                         kubectl apply -f $SECRET_FILE || true
                         kubectl apply -f $DEPLOYMENT_FILE
                         kubectl apply -f $SERVICE_FILE
+                        kubectl rollout restart deployment/flask-app-deployment
                         kubectl rollout status deployment/flask-app-deployment --timeout=3m || true
                     '''
                 }
@@ -77,18 +76,27 @@ pipeline {
         stage('Diagnostics') {
             steps {
                 echo "🩺 Running diagnostics..."
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials'
-                ]]) {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials' ]]) {
                     sh '''
                         kubectl get pods -o wide
                         kubectl get svc flask-app-service
                         kubectl get events --sort-by=.metadata.creationTimestamp | tail -n 40
+                        kubectl logs -l app=flask-app --tail=50
                     '''
                 }
             }
         }
+
+        // Optional: Trigger /initdb route after deployment
+        // stage('Initialize DB') {
+        //     steps {
+        //         echo "🧱 Initializing database..."
+        //         sh '''
+        //             APP_URL=$(kubectl get svc flask-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        //             curl -s http://$APP_URL/initdb || true
+        //         '''
+        //     }
+        // }
     }
 
     post {
@@ -97,10 +105,7 @@ pipeline {
         }
         success {
             echo "✅ Deployment completed successfully!"
-            withCredentials([[
-                $class: 'AmazonWebServicesCredentialsBinding',
-                credentialsId: 'aws-credentials'
-            ]]) {
+            withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials' ]]) {
                 sh '''
                     kubectl get svc flask-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
                 '''
