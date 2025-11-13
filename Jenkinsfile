@@ -49,9 +49,15 @@ pipeline {
         stage('Configure Kubeconfig') {
             steps {
                 echo "⚙️ Configuring kubeconfig for EKS..."
-                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials' ]]) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                     sh '''
-                        aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
+                        echo "🔍 Checking AWS identity..."
+                        aws sts get-caller-identity || { echo "❌ Invalid AWS credentials"; exit 1; }
+
+                        echo "🔧 Updating kubeconfig..."
+                        aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME || { echo "❌ Failed to configure kubeconfig"; exit 1; }
+
+                        echo "✅ Kubeconfig successfully configured."
                     '''
                 }
             }
@@ -60,9 +66,8 @@ pipeline {
         stage('Apply Secrets & Deploy') {
             steps {
                 echo "🚀 Deploying to EKS..."
-                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials' ]]) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                     sh '''
-                        aws sts get-caller-identity
                         kubectl apply -f $SECRET_FILE || true
                         kubectl apply -f $DEPLOYMENT_FILE
                         kubectl apply -f $SERVICE_FILE
@@ -76,18 +81,18 @@ pipeline {
         stage('Diagnostics') {
             steps {
                 echo "🩺 Running diagnostics..."
-                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials' ]]) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                     sh '''
                         kubectl get pods -o wide
                         kubectl get svc flask-app-service
                         kubectl get events --sort-by=.metadata.creationTimestamp | tail -n 40
-                        kubectl logs -l app=flask-app --tail=50
+                        kubectl logs -l app=flask-app --tail=50 || true
                     '''
                 }
             }
         }
 
-        // Optional: Trigger /initdb route after deployment
+        // Optional: DB initialization stage (disabled by default)
         // stage('Initialize DB') {
         //     steps {
         //         echo "🧱 Initializing database..."
@@ -105,7 +110,7 @@ pipeline {
         }
         success {
             echo "✅ Deployment completed successfully!"
-            withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials' ]]) {
+            withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                 sh '''
                     kubectl get svc flask-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
                 '''
